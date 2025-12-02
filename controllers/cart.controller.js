@@ -92,14 +92,40 @@ exports.addToCart = async (req, res) => {
 exports.removeFromCart = async (req, res) => {
     try {
         const { variantId } = req.params;
-        const user = await User.findById(req.user.id);
+        
+        console.log(`Attempting to remove variantId: ${variantId} for user ${req.user.id}`);
 
-        user.cart = user.cart.filter(item => item.variantId !== variantId);
+        // 1. ATOMIC REMOVE ($pull)
+        // This tells MongoDB: "Go into the cart array and pull out the item with this variantId"
+        await User.updateOne(
+            { _id: req.user.id },
+            { $pull: { cart: { variantId: variantId } } }
+        );
 
-        await user.save();
-        res.json(user.cart);
+        // 2. Return the updated cart so Frontend stays in sync
+        const user = await User.findById(req.user.id).populate({
+            path: 'cart.product',
+            model: 'Product',
+        });
+
+        // Format the response exactly like getCart/login
+        const formattedCart = user.cart.map(item => {
+            if (!item.product) return null;
+            const variant = item.product.variants?.find(v => v._id.toString() === item.variantId);
+            return {
+                id: item.product._id,
+                name: item.product.name,
+                price: variant ? variant.price : item.product.price,
+                imageUrl: item.product.imageUrl,
+                variant: item.variantId,
+                quantity: item.quantity
+            };
+        }).filter(Boolean);
+
+        res.json(formattedCart);
+
     } catch (error) {
-        console.error(error.message);
+        console.error("Remove Error:", error.message);
         res.status(500).json({ message: 'Server error' });
     }
 };

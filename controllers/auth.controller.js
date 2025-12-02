@@ -113,7 +113,9 @@ exports.login = async (req, res) => {
         }
         // ---------------------------
 
-        // 3. Populate the cart so the frontend gets full product details (Images, Names)
+        // ... (existing login logic above) ...
+
+        // 1. POPULATE THE CART
         await user.populate({
             path: 'cart.product',
             model: 'Product'
@@ -121,6 +123,24 @@ exports.login = async (req, res) => {
 
         const token = generateToken(user._id);
 
+        // 2. FORMAT CART (Exactly like cart.controller.js)
+        const formattedCart = user.cart.map(item => {
+            if (!item.product) return null; // Skip if product deleted
+
+            // Find the specific variant to get the correct price
+            const variant = item.product.variants?.find(v => v._id.toString() === item.variantId);
+
+            return {
+                id: item.product._id,       // Product ID
+                name: item.product.name,
+                price: variant ? variant.price : item.product.price,
+                imageUrl: item.product.imageUrl,
+                variant: item.variantId,    // <--- CRITICAL for Deleting!
+                quantity: item.quantity
+            };
+        }).filter(Boolean);
+
+        // 3. SEND RESPONSE
         res.json({
             token,
             user: {
@@ -129,23 +149,8 @@ exports.login = async (req, res) => {
                 email: user.email,
                 isAdmin: user.isAdmin,
                 addresses: user.addresses,
-                // 4. Send back the MERGED cart formatted for the Frontend
-                cart: user.cart.map(item => {
-                    // Safety check in case product was deleted
-                    if(!item.product) return null; 
-                    
-                    // Find correct price for this variant
-                    const variant = item.product.variants?.find(v => v._id.toString() === item.variantId);
-                    
-                    return {
-                        id: item.product._id,
-                        name: item.product.name,
-                        price: variant ? variant.price : item.product.price,
-                        imageUrl: item.product.imageUrl,
-                        variant: item.variantId,
-                        quantity: item.quantity
-                    };
-                }).filter(Boolean) // Remove nulls
+                phoneNumber: user.phoneNumber,
+                cart: formattedCart // <--- Send the clean, formatted cart
             }
         });
 

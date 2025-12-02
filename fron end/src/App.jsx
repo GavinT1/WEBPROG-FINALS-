@@ -239,7 +239,12 @@ const CartView = ({ cartItems, onUpdateQuantity, onRemove, onCheckoutClick, prod
             <div className="cart-layout">
                 <div className="cart-items-list">
                     {cartItems.map(item => (
-                        <CartItem key={item.id} item={item} onUpdateQuantity={onUpdateQuantity} onRemove={onRemove} />
+                        <CartItem 
+                key={`${item.id}-${item.variant || 'std'}`} // <--- Unique Key Fix
+                item={item} 
+                onUpdateQuantity={onUpdateQuantity} 
+                onRemove={onRemove} 
+                     />
                     ))}
                 </div>
 
@@ -1712,39 +1717,39 @@ const handleAddToCart = useCallback(async (product, qty = 1) => { // Accept qty,
 }, [user]);   
 
 const handleRemoveItem = useCallback(async (id) => {
-    // 1. Find the item details BEFORE removing it (we need the variant ID)
+    // 1. Find the item in the local cart
     const itemToRemove = cart.find(item => item.id === id);
 
-    // 2. Optimistic Update (Remove from UI immediately)
+    // 2. Determine the correct Variant ID to delete
+    let variantIdToDelete = itemToRemove?.variant;
+
+    // FALLBACK: If the cart item doesn't have the variant ID (e.g. from an old session),
+    // look it up in the products list.
+    if (!variantIdToDelete || variantIdToDelete === 'Standard') {
+        const productRef = products.find(p => p.id === id);
+        if (productRef && productRef.variants && productRef.variants.length > 0) {
+            // Default to the first variant if we can't find a specific one
+            variantIdToDelete = productRef.variants[0]._id || productRef.variants[0].id;
+        }
+    }
+
+    console.log("Deleting Variant ID:", variantIdToDelete); // Check your console for this!
+
+    // 3. Optimistic Update (Remove from UI immediately)
     setCart(prevCart => prevCart.filter(item => item.id !== id));
 
-    // 3. Sync with Backend
-    if (user && itemToRemove) {
+    // 4. Sync with Backend
+    if (user && variantIdToDelete) {
         try {
-            // The backend requires the 'variantId' to know exactly what to delete.
-            // (Just sending the product ID isn't enough if you have multiple variants)
-            let variantIdToDelete = itemToRemove.variant;
-
-            // Fail-safe: If for some reason the local item doesn't have the variant ID,
-            // try to grab the ID of the first variant from the product list.
-            if (!variantIdToDelete || variantIdToDelete === 'Standard') {
-                 const productRef = products.find(p => p.id === id);
-                 if(productRef && productRef.variants && productRef.variants.length > 0) {
-                     variantIdToDelete = productRef.variants[0]._id || productRef.variants[0].id;
-                 }
-            }
-            
-            if (variantIdToDelete) {
-                // Call the DELETE endpoint
-                await api.delete(`/cart/${variantIdToDelete}`);
-                console.log("Item removed from database");
-            } else {
-                console.warn("Could not find variant ID to delete");
-            }
+            await api.delete(`/cart/${variantIdToDelete}`);
         } catch (err) {
             console.error("Failed to remove from backend", err);
-            // Optional: You could reload the cart from server here if sync fails
+            // Optional: Fetch cart again to revert changes if it failed
+            // const { data } = await api.get('/cart');
+            // setCart(data);
         }
+    } else {
+        console.warn("Skipped Backend Delete: No Variant ID found.");
     }
 }, [cart, user, products]);
 
