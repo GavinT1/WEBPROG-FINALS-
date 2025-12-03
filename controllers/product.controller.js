@@ -40,10 +40,10 @@ exports.getProductById = async (req, res) => {
 };
 
 exports.updateProduct = async (req, res) => {
-    try{
-        // 1. Destructure ALL fields, including the new ones
+    try {
+        // 1. Destructure ALL fields (Added 'price' here)
         const { 
-            name, brand, description, category, specs, variants, 
+            name, price, brand, description, category, specs, variants, 
             supplierId, unitPrice, costPrice, isActive 
         } = req.body;
 
@@ -51,14 +51,20 @@ exports.updateProduct = async (req, res) => {
         
         if(product){
             // Update Standard Fields
-            product.name = name || product.name;
-            product.brand = brand || product.brand;
-            product.description = description || product.description;
-            product.category = category || product.category;
-            product.specs = specs || product.specs;
-            product.variants = variants || product.variants;
+            if (name) product.name = name;
+            
+            // FIX: Explicitly update the price
+            if (price !== undefined) product.price = price; 
 
-            // Update New Fields (We use checks to ensure we can save 'false' or '0')
+            if (brand) product.brand = brand;
+            if (description) product.description = description;
+            if (category) product.category = category;
+            if (specs) product.specs = specs;
+            
+            // Update Variants
+            if (variants) product.variants = variants;
+
+            // Update New Fields
             if (supplierId !== undefined) product.supplierId = supplierId;
             if (unitPrice !== undefined) product.unitPrice = unitPrice;
             if (costPrice !== undefined) product.costPrice = costPrice;
@@ -66,7 +72,7 @@ exports.updateProduct = async (req, res) => {
 
             const updatedProduct = await product.save();
             res.json(updatedProduct);
-        } else{
+        } else {
             res.status(404).json({ message: 'Product not found' });
         }
     } catch (error) {
@@ -111,15 +117,16 @@ exports.updateProductVariants = async (req, res) => {
 
 exports.deleteProduct = async (req, res) => {
     try {
-        const product = await Product.findById(req.params.id);
-        if(product){
-            await product.deleteOne();
-            res.json({ message: 'Product deleted successfully' });
-        } else{
-            res.status(404).json({ message: 'Product not found' });
+        // Find the product by ID and delete it in one step
+        const product = await Product.findByIdAndDelete(req.params.id);
+
+        if (!product) {
+            return res.status(404).json({ message: 'Product not found' });
         }
+
+        res.json({ message: 'Product deleted successfully' });
     } catch (error) {
-        console.error(error.message);
+        console.error("Delete Error:", error.message);
         res.status(500).json({ message: 'Server error' });
     }
 };

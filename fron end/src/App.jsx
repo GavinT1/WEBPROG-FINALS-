@@ -1181,12 +1181,13 @@ const DashboardView = ({ user, onLogout, addresses = [], setAddresses, history, 
 
 // PRODUCT MANAGER
 
+// --- FIXED PRODUCT MANAGER (With Main Price Edit) ---
 const ProductManager = ({ product, onSave, onGoBack }) => {
     const isNew = !product;
     const initialProduct = product || {
-        id: Date.now(), // Temporary ID for new products
+        id: Date.now(),
         name: '',
-        price: 0,
+        price: 0, // This is the MAIN PRICE you want to edit
         compatibility: '',
         description: '',
         category: '',
@@ -1226,22 +1227,19 @@ const ProductManager = ({ product, onSave, onGoBack }) => {
         }));
     };
 
-    const handleSubmit = (e) => {
+   const handleSubmit = (e) => {
         e.preventDefault();
-        // Simple validation: ensure name, price > 0, and at least one variant
-        if (!formData.name || formData.price <= 0 || formData.variants.length === 0) {
-            alert("Please fill out Name and ensure Price and Variants are valid.");
+        
+        // Validation
+        if (!formData.name || formData.price <= 0) {
+            alert("Please provide a valid Name and Main Price.");
             return;
         }
 
-        // Clean up price: set the main product price to the cheapest variant's price
-        const sortedVariants = formData.variants.sort((a, b) => a.price - b.price);
-        const finalPrice = sortedVariants[0] ? sortedVariants[0].price : formData.price;
-
+        // DIRECT SAVE (No price overriding!)
         onSave({ 
             ...formData, 
-            price: finalPrice, 
-            id: isNew ? Date.now() : formData.id // Ensure stable ID for updates
+            id: isNew ? Date.now() : formData.id 
         }, isNew);
     };
 
@@ -1263,10 +1261,28 @@ const ProductManager = ({ product, onSave, onGoBack }) => {
                             className="form-input form-input-full" 
                             required 
                         />
+                        
+                        {/* --- NEW: MAIN PRICE INPUT --- */}
+                        <div style={{gridColumn: '1 / span 2'}}>
+                            <label style={{display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#374151'}}>Main Display Price (PHP)</label>
+                            <input 
+                                name="price" 
+                                type="number" 
+                                step="0.01"
+                                placeholder="0.00" 
+                                value={formData.price} 
+                                onChange={handleInputChange} 
+                                className="form-input" 
+                                style={{width: '100%'}}
+                                required 
+                            />
+                        </div>
+                        {/* ----------------------------- */}
+
                         <input 
                             name="compatibility" 
                             type="text" 
-                            placeholder="Brand/Compatibility (e.g., Apple, Accessories)" 
+                            placeholder="Brand/Compatibility (e.g., Apple)" 
                             value={formData.compatibility} 
                             onChange={handleInputChange} 
                             className="form-input" 
@@ -1275,7 +1291,7 @@ const ProductManager = ({ product, onSave, onGoBack }) => {
                          <input 
                             name="category" 
                             type="text" 
-                            placeholder="Category (e.g., Flagship, Charger)" 
+                            placeholder="Category (e.g., Flagship)" 
                             value={formData.category} 
                             onChange={handleInputChange} 
                             className="form-input" 
@@ -1284,7 +1300,7 @@ const ProductManager = ({ product, onSave, onGoBack }) => {
                         <input 
                             name="imageUrl" 
                             type="text" 
-                            placeholder="Image URL (e.g., /images/filename.png)" 
+                            placeholder="Image URL" 
                             value={formData.imageUrl} 
                             onChange={handleInputChange} 
                             className="form-input form-input-full" 
@@ -1302,8 +1318,8 @@ const ProductManager = ({ product, onSave, onGoBack }) => {
 
                     <div className="form-separator"></div>
                     <h3 className="section-title-indigo" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                        Variants & Stock 
-                        <button type="button" onClick={addVariant} className="utility-btn" style={{background: '#3e38c4; ', color: 'white'}}>
+                        Variants (Optional / Extra Options)
+                        <button type="button" onClick={addVariant} className="utility-btn" style={{background: '#3e38c4', color: 'white'}}>
                             <PlusIcon className="icon-small" /> Add Variant
                         </button>
                     </h3>
@@ -1324,7 +1340,7 @@ const ProductManager = ({ product, onSave, onGoBack }) => {
                                 name="price" 
                                 type="number" 
                                 step="0.01" 
-                                placeholder="Price (PHP)" 
+                                placeholder="Variant Price" 
                                 value={variant.price} 
                                 onChange={(e) => handleVariantChange(index, e)} 
                                 className="form-input" 
@@ -1340,7 +1356,7 @@ const ProductManager = ({ product, onSave, onGoBack }) => {
                                 className="form-input" 
                                 required 
                             />
-                            {formData.variants.length > 1 && (
+                            {formData.variants.length > 0 && (
                                 <button type="button" onClick={() => removeVariant(index)} className="remove-item-btn" style={{position: 'absolute', top: '5px', right: '5px'}}>
                                     &times;
                                 </button>
@@ -1351,7 +1367,7 @@ const ProductManager = ({ product, onSave, onGoBack }) => {
                     <button
                         type="submit"
                         className="place-order-btn"
-                        style={{marginTop: '30px', background: isNew ? '#3e38c4' : '#3e38c4; '}}
+                        style={{marginTop: '30px', background: isNew ? '#3e38c4' : '#3e38c4'}}
                     >
                         {isNew ? 'Create Product' : 'Save Changes'}
                     </button>
@@ -1656,47 +1672,111 @@ export default function App() {
         }
     }, [user]);
 
-    const handleSaveProduct = useCallback((updatedProduct, isNew) => {
-        setProducts(prevProducts => {
+    // --- FINAL FIXED SAVE HANDLER (With Data Cleaning & Field Mapping) ---
+    const handleSaveProduct = useCallback(async (updatedProduct, isNew) => {
+        try {
+            // 1. Prepare a CLEAN Payload (The "Sanitizer")
+            // We strictly select ONLY the fields the backend allows us to change.
+            // We deliberately EXCLUDE _id, __v, createdAt, etc.
+            const cleanPayload = {
+                name: updatedProduct.name,
+                price: Number(updatedProduct.price), // Ensure it's a Number
+                description: updatedProduct.description,
+                
+                // MAP FRONTEND 'compatibility' -> BACKEND 'brand'
+                brand: updatedProduct.compatibility || updatedProduct.brand, 
+                
+                category: updatedProduct.category,
+                imageUrl: updatedProduct.imageUrl,
+                
+                // Clean the variants too
+                variants: updatedProduct.variants.map(v => ({
+                    name: v.name,
+                    price: Number(v.price),
+                    stock: Number(v.stock),
+                    // Only keep variant _id if it exists (for editing)
+                    ...(v._id && { _id: v._id }) 
+                }))
+            };
+
+            console.log("SENDING CLEAN DATA:", cleanPayload); // Check this log! It should NOT have _id.
+
+            let savedDataFromBackend;
+
             if (isNew) {
-                // Add new product
-                return [...prevProducts, updatedProduct];
+                // 2. CREATE (POST)
+                const response = await api.post('/products', cleanPayload);
+                savedDataFromBackend = response.data;
             } else {
-                // Update existing product
-                return prevProducts.map(p => 
-                    p.id === updatedProduct.id ? updatedProduct : p
-                );
+                // 3. UPDATE (PUT)
+                // Use the ID from the original object for the URL only
+                const targetId = updatedProduct.id || updatedProduct._id;
+                const response = await api.put(`/products/${targetId}`, cleanPayload);
+                savedDataFromBackend = response.data;
             }
-        });
-        setProductToEdit(null);
-        setIsEditingNewProduct(false);
-        setView('admin');
 
-        const customAlert = (message) => {
-            const messageBox = document.createElement('div');
-            messageBox.className = 'custom-alert-success';
-            messageBox.textContent = message;
-            document.body.appendChild(messageBox);
-            setTimeout(() => {
-                document.body.removeChild(messageBox);
-            }, 3000);
-        };
-        customAlert(`Product ${isNew ? 'added' : 'updated'} successfully!`);
-    }, []);
+            // 4. Update Frontend State
+            // We merge the backend response with your input to ensure the UI updates instantly
+            setProducts(prevProducts => {
+                const finalProductForUI = { 
+                    ...savedDataFromBackend, 
+                    ...updatedProduct, // Keep your inputs visible
+                    id: savedDataFromBackend._id || savedDataFromBackend.id || updatedProduct.id,
+                    compatibility: savedDataFromBackend.brand || updatedProduct.compatibility // Map back to frontend
+                };
+                
+                if (isNew) {
+                    return [...prevProducts, finalProductForUI];
+                } else {
+                    return prevProducts.map(p => 
+                        p.id === finalProductForUI.id ? finalProductForUI : p
+                    );
+                }
+            });
 
-    const handleDeleteProduct = useCallback((id) => {
-        if (window.confirm("Are you sure you want to delete this product?")) {
-            setProducts(prevProducts => prevProducts.filter(p => p.id !== id));
+            // 5. Success
+            setProductToEdit(null);
+            setIsEditingNewProduct(false);
+            setView('admin');
+
             const customAlert = (message) => {
                 const messageBox = document.createElement('div');
-                messageBox.className = 'custom-alert-error';
+                messageBox.className = 'custom-alert-success';
                 messageBox.textContent = message;
                 document.body.appendChild(messageBox);
-                setTimeout(() => {
-                    document.body.removeChild(messageBox);
-                }, 3000);
+                setTimeout(() => document.body.removeChild(messageBox), 3000);
             };
-            customAlert("Product deleted!");
+            customAlert(`Product ${isNew ? 'added' : 'updated'} successfully!`);
+
+        } catch (error) {
+            console.error("Failed to save product:", error);
+            alert("Failed to save. Check console. " + (error.response?.data?.message || error.message));
+        }
+    }, []);
+
+    // --- FINAL CONNECTED DELETE HANDLER ---
+    const handleDeleteProduct = useCallback(async (id) => {
+        if (window.confirm("Are you sure you want to delete this product? PERMANENTLY?")) {
+            try {
+                // 1. Call Backend to Delete
+                await api.delete(`/products/${id}`);
+
+                // 2. Remove from Frontend State
+                setProducts(prevProducts => prevProducts.filter(p => p.id !== id));
+
+                const customAlert = (message) => {
+                    const messageBox = document.createElement('div');
+                    messageBox.className = 'custom-alert-error';
+                    messageBox.textContent = message;
+                    document.body.appendChild(messageBox);
+                    setTimeout(() => document.body.removeChild(messageBox), 3000);
+                };
+                customAlert("Product deleted from Database!");
+
+            } catch (error) {
+                console.error("Failed to delete product:", error);
+                alert("Failed to delete product. It might already be deleted.");
+            }
         }
     }, []);
 
