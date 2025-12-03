@@ -173,65 +173,89 @@ exports.getMyProfile = async (req, res) => {
 
 // --- EXISTING PASSWORD FUNCTIONS ---
 
+// --- 1. FORGOT PASSWORD ---
 exports.forgotPassword = async (req, res) => {
     try {
-        const { email } = req.body;
-        const user = await User.findOne({ email });
-
+        const user = await User.findOne({ email: req.body.email });
         if (!user) {
-            return res.status(200).json({ message: 'Link has been sent to your email!' });
+            return res.status(404).json({ message: 'User not found' });
         }
 
+        // Generate Reset Token
         const resetToken = crypto.randomBytes(20).toString('hex');
-        user.resetPasswordToken = resetToken;
-        user.resetPasswordExpires = Date.now() + 3600000; 
-        await user.save();
 
-        const resetUrl = `http://localhost:5173/resetpassword/${resetToken}`; // Updated to point to Frontend port
-        const message = `
-          <h1>Reset Password has been requested</h1>
-          <p>Please go to this link to reset your password:</p>
-          <a href="${resetUrl}" clicktracking="off">${resetUrl}</a>
-          <p>It will expire in 15 minutes.</p>
-        `;
+        // Hash it and save to user
+        user.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+        
+        // FIX: Match the Model's field name "resetPasswordExpires" (with an 's')
+        user.resetPasswordExpires = Date.now() + 10 * 60 * 1000; // 10 Minutes
 
-        await sendEmail({
-            to: user.email,
-            subject: 'Password Reset Request',
-            html: message
-        });
+        await user.save({ validateBeforeSave: false });
 
-        res.status(200).json({ message: 'Link has been sent to your email!' });
+        // Frontend Link (Ensure port 5173)
+        const frontendURL = 'http://localhost:5173';
+        const resetUrl = `${frontendURL}/?token=${resetToken}`;
+
+        const message = `You have requested a password reset. Please go to this link: \n\n ${resetUrl}`;
+
+        try {
+            await sendEmail({
+                email: user.email,
+                subject: 'Password Reset Token',
+                message: message,
+                url: resetUrl
+            });
+
+            res.status(200).json({ success: true, message: 'Email sent successfully!' });
+
+        } catch (err) {
+            user.resetPasswordToken = undefined;
+            user.resetPasswordExpires = undefined; // FIX: Match Model
+            await user.save({ validateBeforeSave: false });
+            return res.status(500).json({ message: 'Email could not be sent' });
+        }
     } catch (error) {
-        console.error("FORGOT PASSWORD ERROR:", error.message); 
-        res.status(500).json({ message: 'Server error' });
+        console.error(error);
+        res.status(500).json({ message: 'Server Error' });
     }
 };
 
+// --- 2. RESET PASSWORD ---
 exports.resetPassword = async (req, res) => {
     try {
-        const { token } = req.params;
-        const { newPassword } = req.body;
+        const resetToken = req.body.token;
 
+        // Hash the incoming token to compare with DB
+        const hashedToken = crypto
+            .createHash('sha256')
+            .update(resetToken)
+            .digest('hex');
+
+        // FIX: Match the Model's field name "resetPasswordExpires"
         const user = await User.findOne({
-         resetPasswordToken: token, 
-         resetPasswordExpires: { $gt: Date.now() } 
+            resetPasswordToken: hashedToken,
+            resetPasswordExpires: { $gt: Date.now() } 
         });
 
         if (!user) {
             return res.status(400).json({ message: 'Invalid or expired token' });
         }
 
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        // FIX: Your model uses 'passwordHash', not 'password'
+        // We must hash the new password before saving it
+        const salt = await bcrypt.genSalt(10);
+        user.passwordHash = await bcrypt.hash(req.body.newPassword, salt);
 
-        user.passwordHash = hashedPassword;
+        // Clear reset fields
         user.resetPasswordToken = undefined;
-        user.resetPasswordExpires = undefined;
+        user.resetPasswordExpires = undefined; // FIX: Match Model
+
         await user.save();
 
-        res.status(200).json({ message: 'Password has been reset successfully' });
+        res.status(200).json({ success: true, message: 'Password updated successfully' });
+
     } catch (error) {
-        console.error(error.message);
+        console.error("Reset Password Error:", error);
         res.status(500).json({ message: 'Server error' });
     }
 };

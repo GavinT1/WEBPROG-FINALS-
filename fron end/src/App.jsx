@@ -535,24 +535,144 @@ return (
     </div>
 );};
 
-// --- FORGOT PASSWORD VIEW COMPONENT ---
+// --- RESET PASSWORD VIEW (New) ---
+const ResetPasswordView = ({ onGoBack }) => {
+    const [loading, setLoading] = useState(false);
+    
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        const newPassword = e.target.new_password.value;
+        const confirmPassword = e.target.confirm_password.value;
+
+        // 1. Validation
+        if (newPassword !== confirmPassword) {
+            alert("Passwords do not match!");
+            return;
+        }
+        if (newPassword.length < 6) {
+            alert("Password must be at least 6 characters.");
+            return;
+        }
+
+        // 2. Get the Token from the URL (The link in the email looks like: /?token=xyz...)
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('token');
+
+        if (!token) {
+            alert("Invalid or missing reset token.");
+            return;
+        }
+
+        setLoading(true);
+
+        try {
+            // 3. Send to Backend
+            // Make sure your backend has this route!
+            await api.post('/auth/reset-password', { 
+                token: token, 
+                newPassword: newPassword 
+            });
+
+            // 4. Success
+            const customAlert = (message) => {
+                const messageBox = document.createElement('div');
+                messageBox.className = 'custom-alert-success';
+                messageBox.textContent = message;
+                document.body.appendChild(messageBox);
+                setTimeout(() => document.body.removeChild(messageBox), 3000);
+            };
+            customAlert("Password reset successful! Please login.");
+
+            // Clear the token from URL so they don't get stuck here
+            window.history.replaceState({}, document.title, "/");
+            
+            // Go to Login
+            onGoBack(); 
+
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.message || "Failed to reset password. Token might be expired.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="auth-container">
+            <div className="auth-card">
+                <h2 className="auth-title">Set New Password</h2>
+                <p className="auth-toggle-text" style={{ marginBottom: '20px' }}>
+                    Please create a new secure password for your account.
+                </p>
+
+                <form onSubmit={handleSubmit} className="auth-form">
+                    <input 
+                        name="new_password" 
+                        type="password" 
+                        placeholder="New Password" 
+                        className="form-input" 
+                        required 
+                    />
+                    <input 
+                        name="confirm_password" 
+                        type="password" 
+                        placeholder="Confirm New Password" 
+                        className="form-input" 
+                        required 
+                    />
+                    
+                    <button
+                        type="submit"
+                        className="auth-submit-btn"
+                        disabled={loading}
+                    >
+                        {loading ? 'Resetting...' : 'Update Password'}
+                    </button>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+// --- FORGOT PASSWORD VIEW (Real Connection) ---
 const ForgotPasswordView = ({ onGoBack }) => {
-    const handleSubmit = (e) => {
+    // 1. Add loading state to disable button while sending
+    const [loading, setLoading] = useState(false);
+
+    const handleSubmit = async (e) => {
         e.preventDefault();
         const email = e.target.email.value;
         
-        const customAlert = (message) => {
-            const messageBox = document.createElement('div');
-            messageBox.className = 'custom-alert-success';
-            messageBox.textContent = message;
-            document.body.appendChild(messageBox);
-            setTimeout(() => {
-                document.body.removeChild(messageBox);
-            }, 4000);
-        };
-        
-        customAlert(`A password reset link has been sent to ${email}. (Simulated)`);
-        setTimeout(onGoBack, 2000);
+        setLoading(true);
+
+        try {
+            // 2. THIS IS THE CONNECTION TO THE BACKEND
+            // It sends the email to your Node.js server
+            const response = await api.post('/auth/forgot-password', { email });
+
+            const customAlert = (message) => {
+                const messageBox = document.createElement('div');
+                messageBox.className = 'custom-alert-success';
+                messageBox.textContent = message;
+                document.body.appendChild(messageBox);
+                setTimeout(() => {
+                    document.body.removeChild(messageBox);
+                }, 4000);
+            };
+            
+            // 3. Show success message from the server
+            customAlert(response.data.message || "Email sent! Check your inbox.");
+            
+            // Wait 2 seconds, then go back to login
+            setTimeout(onGoBack, 2000);
+
+        } catch (error) {
+            console.error("Forgot Password Error:", error);
+            const errorMsg = error.response?.data?.message || "Failed to send email. Please try again.";
+            alert(errorMsg);
+        } finally {
+            setLoading(false);
+        }
     };
 
     return (
@@ -569,8 +689,10 @@ const ForgotPasswordView = ({ onGoBack }) => {
                     <button
                         type="submit"
                         className="auth-submit-btn"
+                        disabled={loading}
+                        style={{ opacity: loading ? 0.7 : 1 }}
                     >
-                        Send Reset Link
+                        {loading ? 'Sending...' : 'Send Reset Link'}
                     </button>
                 </form>
                 
@@ -1623,6 +1745,18 @@ export default function App() {
         loadUser();
     }, []);
 
+    // --- NEW: CHECK FOR RESET TOKEN IN URL ---
+    useEffect(() => {
+        // Check if the URL has ?token=...
+        const params = new URLSearchParams(window.location.search);
+        const resetToken = params.get('token');
+
+        if (resetToken) {
+            // If we found a token, force the view to 'reset-password'
+            setView('reset-password');
+        }
+    }, []);
+
     // --- LOAD PURCHASE HISTORY FROM DB ---
     useEffect(() => {
         if (user) {
@@ -2249,13 +2383,19 @@ const handleUpdateQuantity = useCallback(async (id, delta) => {
             // --- ADMIN FEATURE END ---
             
             case 'forgot-password': 
-                return <ForgotPasswordView onGoBack={() => setView('auth')} />; 
+                return <ForgotPasswordView onGoBack={() => setView('auth')} 
+                />;
+
             case 'home':
             default:
                 return <HomeView 
                     products={filteredAndSortedProducts} 
                     onAddToCart={handleAddToCart}
                     onViewDetails={handleViewDetails}
+                />;
+
+                case 'reset-password':
+                return <ResetPasswordView onGoBack={() => setView('auth')} 
                 />;
         }
     };
