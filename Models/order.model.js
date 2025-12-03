@@ -12,23 +12,22 @@ const orderSchema = new mongoose.Schema({
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     orderItems: [OrderItemSchema],
     shippingAddress: {
-        address: { type: String, required: true },
+        name: { type: String, required: true },          // Full name / label
+        street: { type: String, required: true },        // Address line
         city: { type: String, required: true },
-        postalCode: { type: String, required: true },
-        country: { type: String, required: true },
-        phoneNumber: { type: String, required: true },
+        zip: { type: String, required: true },
     },
     paymentMethod: { type: String, required: true, default: "Not Specified" },
 
-    orderStatus:{ type: String, required: true, enum:['pending', 'processing', 'completed', 'cancelled'], default: 'processing' },
-    paymentStatus:{ type: String, required:true, enum:['pending', 'paid', 'failed'], default: 'pending' },
+    orderStatus: { type: String, required: true, enum:['pending', 'processing', 'completed', 'cancelled'], default: 'processing' },
+    paymentStatus: { type: String, required:true, enum:['pending', 'paid', 'failed'], default: 'pending' },
 
-    totalPrice:{ type: Number, required: true, default: 0.0 },
-    isPaid:{ type: Boolean, required: true, default: false },
-    paidAt:{ type: Date },
-    isDelivered:{ type: Boolean, required: true, default: false },
-    deliveredAt:{ type: Date },
-},{
+    totalPrice: { type: Number, required: true, default: 0.0 },
+    isPaid: { type: Boolean, required: true, default: false },
+    paidAt: { type: Date },
+    isDelivered: { type: Boolean, required: true, default: false },
+    deliveredAt: { type: Date },
+}, {
     timestamps: true,
 });
 

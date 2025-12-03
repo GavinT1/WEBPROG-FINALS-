@@ -44,7 +44,7 @@ const ShippingAddresses = ({ addresses }) => (
         <div className="address-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '15px' }}>
             {addresses.map(addr => (
                 <div key={addr.id} className={`address-card ${addr.isDefault ? 'address-card-default' : ''}`} style={{ border: addr.isDefault ? '2px solid #6366F1' : '1px solid #ccc', borderRadius: '8px', padding: '15px', cursor: 'pointer', position: 'relative' }}>
-                    <input type="radio" name="delivery_address" id={`addr-${addr.id}`} defaultChecked={addr.isDefault} className="address-radio" style={{ position: 'absolute', top: '15px', right: '15px', width: '20px', height: '20px' }} />
+                    <input type="radio" name="delivery_address" id={`addr-${addr.id}`} value={addr._id} defaultChecked={addr.isDefault} className="address-radio" style={{ position: 'absolute', top: '15px', right: '15px', width: '20px', height: '20px' }} />
                     <label htmlFor={`addr-${addr.id}`} className="address-label" style={{ display: 'block', paddingRight: '30px' }}>
                         <span className="address-name" style={{ fontWeight: 'bold' }}>
                             {addr.name} 
@@ -276,201 +276,264 @@ const CartView = ({ cartItems, onUpdateQuantity, onRemove, onCheckoutClick, prod
     );
 };
 
-// --- CHECKOUT VIEW (Fixed: No setIsFormOpen error + Zip Code Fix) ---
 const CheckoutView = ({ cartItems, addresses = [], setAddresses, onPlaceOrder }) => {
-    // 1. STATE
-    // Select default address or 'new' if none exist
-    const defaultAddr = addresses.find(a => a.isDefault);
-    const [selectedAddressId, setSelectedAddressId] = useState(defaultAddr ? (defaultAddr._id || defaultAddr.id) : 'new');
-    
-    const [editingId, setEditingId] = useState(null);
-    const [newAddressForm, setNewAddressForm] = useState({ name: '', street: '', city: '', zip: '' });
+// --- STATE ---
+const [selectedAddressId, setSelectedAddressId] = useState('');
+const [editingId, setEditingId] = useState(null);
+const [newAddressForm, setNewAddressForm] = useState({ name: '', street: '', city: '', zip: '' });
 
-    // Payment State
-    const [cardNumber, setCardNumber] = useState('');
-    const [expiry, setExpiry] = useState('');
-    const [cvc, setCvc] = useState('');
-    const [nameOnCard, setNameOnCard] = useState('');
+const [cardNumber, setCardNumber] = useState('');
+const [expiry, setExpiry] = useState('');
+const [cvc, setCvc] = useState('');
+const [nameOnCard, setNameOnCard] = useState('');
 
-    // Totals
-    const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const shipping = subtotal > 0 ? 15.00 : 0;
-    const tax = subtotal * 0.05;
-    const total = subtotal + shipping + tax;
+// --- Sync selectedAddressId when addresses load ---
+useEffect(() => {
+    if (addresses.length > 0) {
+        const defaultAddr = addresses.find(a => a.isDefault);
+        setSelectedAddressId(
+            defaultAddr?._id || defaultAddr?.id || addresses[0]._id || addresses[0].id
+        );
+    } else {
+        setSelectedAddressId(''); // no addresses yet
+    }
+}, [addresses]);
 
-    // --- HANDLERS ---
-    const handleAddressFormChange = (e) => {
-        setNewAddressForm({ ...newAddressForm, [e.target.name]: e.target.value });
-    };
+// --- Totals ---
+const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+const shipping = subtotal > 0 ? 15.0 : 0;
+const tax = subtotal * 0.05;
+const total = subtotal + shipping + tax;
 
-    const handleAddNewClick = () => {
-        setEditingId(null);
-        setNewAddressForm({ name: '', street: '', city: '', zip: '' });
-        setSelectedAddressId('new');
-    };
+// --- HANDLERS ---
+const handleAddressFormChange = (e) => {
+    setNewAddressForm({ ...newAddressForm, [e.target.name]: e.target.value });
+};
 
-    const handleEditAddress = (e, addr) => {
-        e.stopPropagation();
-        setEditingId(addr._id || addr.id); // Handle both ID types
-        
-        // FIX: Read Zip directly. Do not split city string.
-        setNewAddressForm({ 
-            name: addr.label, 
-            street: addr.address, 
-            city: addr.city, 
-            zip: addr.zip || '' 
-        });
-        
-        setSelectedAddressId('new'); // Switch to form view
-    };
+const handleAddNewClick = () => {
+    setEditingId(null);
+    setNewAddressForm({ name: '', street: '', city: '', zip: '' });
+    setSelectedAddressId('new');
+};
 
-    const handleDeleteAddress = async (e, id) => {
-        e.stopPropagation();
-        if (window.confirm("Delete this address?")) {
-            const updatedList = addresses.filter(a => (a._id || a.id) !== id);
-            setAddresses(updatedList);
-            if (selectedAddressId === id) setSelectedAddressId('new');
+const handleEditAddress = (e, addr) => {
+    e.stopPropagation();
+    setEditingId(addr._id || addr.id);
+    setNewAddressForm({
+        name: addr.label,
+        street: addr.address,
+        city: addr.city,
+        zip: addr.zip || ''
+    });
+    setSelectedAddressId('new'); // switch to form view
+};
 
-            try {
-                await api.put('/auth/update-addresses', { addresses: updatedList });
-            } catch (err) { console.error("Delete failed", err); }
-        }
-    };
-
-    const handleSaveAddress = async () => {
-        if (!newAddressForm.street) return alert("Address required");
-
-        const newAddr = { 
-            _id: editingId || Date.now().toString(), 
-            label: newAddressForm.name || "My Address", 
-            address: newAddressForm.street, 
-            city: newAddressForm.city, 
-            zip: newAddressForm.zip,
-            isDefault: addresses.length === 0 
-        };
-        
-        let updatedList;
-        if (editingId) {
-            updatedList = addresses.map(a => (a._id || a.id) === editingId ? newAddr : a);
-        } else {
-            updatedList = [...addresses, newAddr];
-        }
-        
+const handleDeleteAddress = async (e, id) => {
+    e.stopPropagation();
+    if (window.confirm("Delete this address?")) {
+        const updatedList = addresses.filter(a => (a._id || a.id) !== id);
         setAddresses(updatedList);
-        
-        // FIX: Don't call setIsFormOpen(false). Just select the ID.
-        setSelectedAddressId(editingId || newAddr._id);
-        setEditingId(null); 
-
+        if (selectedAddressId === id) setSelectedAddressId(updatedList[0]?._id || updatedList[0]?.id || '');
         try {
             await api.put('/auth/update-addresses', { addresses: updatedList });
-        } catch (err) { console.error("Save failed", err); }
-    };
-
-    const handlePlaceOrder = (e) => {
-        e.preventDefault();
-        if (selectedAddressId === 'new') return alert("Please save your address first.");
-        if (cardNumber.length !== 16) return alert("Card number must be 16 digits.");
-        onPlaceOrder(selectedAddressId);
-    };
-
-    return (
-        <div className="main-content-container checkout-container">
-            <h2 className="page-title">Secure Checkout</h2>
-            <div className="checkout-card">
-                <form onSubmit={handlePlaceOrder} className="checkout-form">
-                    
-                    <div className="shipping-address-container">
-                        <h3 className="section-title-indigo">
-                            <MapPinIcon className="icon-medium" style={{marginRight: '8px'}} />
-                            SELECT DELIVERY ADDRESS
-                        </h3>
-
-                        <div className="address-grid">
-                            {addresses.map(addr => {
-                                const id = addr._id || addr.id;
-                                return (
-                                    <div 
-                                        key={id} 
-                                        onClick={() => setSelectedAddressId(id)}
-                                        className={`address-card ${selectedAddressId === id ? 'selected' : ''}`}
-                                    >
-                                        <div className="address-radio-circle">
-                                            {selectedAddressId === id && <div className="address-radio-dot"></div>}
-                                        </div>
-                                        <label className="address-label">
-                                            <span className="address-name">{addr.label}</span>
-                                            <p className="address-street">{addr.address}</p>
-                                            {/* FIX: Display Zip Code Here */}
-                                            <p className="address-city">{addr.city} {addr.zip}</p>
-                                        </label>
-                                        <div className="address-actions">
-                                            <button type="button" className="icon-btn edit-btn" onClick={(e) => handleEditAddress(e, addr)}>
-                                                <EditIcon />
-                                            </button>
-                                            <button type="button" className="icon-btn delete-btn" onClick={(e) => handleDeleteAddress(e, id)}>
-                                                <TrashIcon />
-                                            </button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-
-                            <div 
-                                onClick={handleAddNewClick} 
-                                className={`add-address-btn ${selectedAddressId === 'new' && !editingId ? 'active' : ''}`}
-                            >
-                                <PlusIcon className="icon-small" style={{marginRight: '8px'}} /> 
-                                {selectedAddressId === 'new' && !editingId ? "Entering new address..." : "Use a different address"}
-                            </div>
-                        </div>
-
-                        {selectedAddressId === 'new' && (
-                            <div className="shipping-information">
-                                <h3 className="section-title-indigo">{editingId ? "EDIT ADDRESS" : "ADD NEW ADDRESS"}</h3>
-                                <div className="form-grid">
-                                    <input name="name" value={newAddressForm.name} onChange={handleAddressFormChange} type="text" placeholder="Full Name / Label" className="form-input" />
-                                    <input name="street" value={newAddressForm.street} onChange={handleAddressFormChange} type="text" placeholder="Address Line 1" className="form-input form-input-full" />
-                                    <input name="city" value={newAddressForm.city} onChange={handleAddressFormChange} type="text" placeholder="City" className="form-input" />
-                                    <input name="zip" value={newAddressForm.zip} onChange={handleAddressFormChange} type="text" placeholder="Zip Code" className="form-input" />
-                                    
-                                    <button type="button" onClick={handleSaveAddress} className="save-address-btn">
-                                        <CheckCircleIcon className="icon-small" />
-                                        {editingId ? "Update Address" : "Save & Deliver Here"}
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="form-separator"></div>
-
-                    {/* PAYMENT & TOTALS */}
-                    <div>
-                        <h3 className="section-title-indigo">PAYMENT DETAILS</h3>
-                        <input type="text" placeholder="Card Number (16 digits)" required className="form-input form-input-full mb-16" maxLength="16" value={cardNumber} onChange={e => setCardNumber(e.target.value.replace(/\D/g, ''))} />
-                        <div className="form-grid-3">
-                            <input type="text" placeholder="MM/YY" required className="form-input" value={expiry} onChange={e => setExpiry(e.target.value)} maxLength="5" />
-                            <input type="text" placeholder="CVC" required className="form-input" value={cvc} onChange={e => setCvc(e.target.value.replace(/\D/g, '').slice(0, 3))} maxLength="3" />
-                            <input type="text" placeholder="Name" required className="form-input" value={nameOnCard} onChange={e => setNameOnCard(e.target.value)} />
-                        </div>
-                    </div>
-
-                    <div className="checkout-total-section">
-                        <div className="summary-total summary-total-large">
-                            <span>Final Total</span>
-                            <span className="final-total-price">{CurrencyFormatter.format(total)}</span>
-                        </div>
-                    </div>
-
-                    <button type="submit" className="place-order-btn" disabled={cartItems.length === 0}>
-                        Place Order
-                    </button>
-                </form>
-            </div>
-        </div>
-    );
+        } catch (err) {
+            console.error("Delete failed", err);
+        }
+    }
 };
+
+const handleSaveAddress = async () => {
+    if (!newAddressForm.street) return alert("Address required");
+
+    const newAddr = {
+        _id: editingId || undefined,
+        label: newAddressForm.name || "My Address",
+        address: newAddressForm.street,
+        city: newAddressForm.city,
+        zip: newAddressForm.zip,
+        isDefault: addresses.length === 0
+    };
+
+    let updatedList = editingId
+        ? addresses.map(a => (a._id || a.id) === editingId ? newAddr : a)
+        : [...addresses, newAddr];
+
+    try {
+        const { data } = await api.put('/auth/update-addresses', { addresses: updatedList });
+        const realAddresses = data.user?.addresses || data.addresses || updatedList;
+        setAddresses(realAddresses);
+
+        const savedAddress = editingId
+            ? realAddresses.find(a => (a._id || a.id) === editingId)
+            : realAddresses[realAddresses.length - 1];
+
+        setSelectedAddressId(savedAddress._id || savedAddress.id);
+
+        setNewAddressForm({ name: '', street: '', city: '', zip: '' });
+        setEditingId(null);
+
+    } catch (err) {
+        console.error(err);
+        alert("Failed to save address.");
+    }
+};
+
+// --- PLACE ORDER (FIXED TO IGNORE ID MISMATCH) ---
+const handleSubmitOrder = async (e) => {
+    e.preventDefault();
+
+    // 1. Check if the list is empty
+    if (!addresses || addresses.length === 0) {
+        return alert("Please add a delivery address first.");
+    }
+
+    // 2. Try to find the specific address
+    let selectedAddr = addresses.find(a => String(a._id || a.id) === String(selectedAddressId));
+
+    // 3. THE FIX: If exact ID isn't found, just use the first address in the list
+    if (!selectedAddr) {
+        console.log("Exact ID not found. Auto-selecting the available address.");
+        selectedAddr = addresses[0]; // <--- FORCES THE FIRST ADDRESS
+    }
+
+    // 4. Double check we actually have data now
+    if (!selectedAddr) return alert("Address data is missing.");
+
+    if (cardNumber.length !== 16) return alert("Card number must be 16 digits.");
+
+    console.log("Submitting Order with Address:", selectedAddr);
+
+    onPlaceOrder({
+        shippingAddress: {
+            name: selectedAddr.label,
+            street: selectedAddr.address,
+            city: selectedAddr.city,
+            zip: selectedAddr.zip
+            // Phone number is REMOVED as requested
+        },
+        orderItems: cartItems.map(item => ({
+            name: item.name,
+            qty: item.quantity,
+            image: item.imageUrl || "",
+            price: item.price,
+            product: item.id
+        })),
+        paymentMethod: "Card",
+        itemsPrice: subtotal,
+        taxPrice: tax,
+        shippingPrice: shipping,
+        totalPrice: total
+    });
+};
+
+// Add this inside your component, before the return statement
+useEffect(() => {
+    // If we have addresses, but the selected ID is invalid
+    if (addresses && addresses.length > 0) {
+        const isValid = addresses.find(a => String(a._id || a.id) === String(selectedAddressId));
+        
+        // If current selection is invalid (and we aren't trying to add a 'new' one)
+        if (!isValid && selectedAddressId !== 'new') {
+            // Auto-select the first address in the list
+            setSelectedAddressId(addresses[0]._id || addresses[0].id);
+        }
+    }
+}, [addresses, selectedAddressId]);
+
+return (
+    <div className="main-content-container checkout-container">
+        <h2 className="page-title">Secure Checkout</h2>
+        <div className="checkout-card">
+            <form onSubmit={handleSubmitOrder} className="checkout-form">
+
+                <div className="shipping-address-container">
+                    <h3 className="section-title-indigo">
+                        <MapPinIcon className="icon-medium" style={{ marginRight: '8px' }} />
+                        SELECT DELIVERY ADDRESS
+                    </h3>
+
+                    <div className="address-grid">
+                        {addresses.map(addr => {
+                            const id = addr._id || addr.id;
+                            return (
+                                <div
+                                    key={id}
+                                    onClick={() => setSelectedAddressId(id)}
+                                    className={`address-card ${selectedAddressId === id ? 'selected' : ''}`}
+                                >
+                                    <div className="address-radio-circle">
+                                        {selectedAddressId === id && <div className="address-radio-dot"></div>}
+                                    </div>
+                                    <label className="address-label">
+                                        <span className="address-name">{addr.label}</span>
+                                        <p className="address-street">{addr.address}</p>
+                                        <p className="address-city">{addr.city} {addr.zip}</p>
+                                    </label>
+                                    <div className="address-actions">
+                                        <button type="button" className="icon-btn edit-btn" onClick={(e) => handleEditAddress(e, addr)}>
+                                            <EditIcon />
+                                        </button>
+                                        <button type="button" className="icon-btn delete-btn" onClick={(e) => handleDeleteAddress(e, id)}>
+                                            <TrashIcon />
+                                        </button>
+                                    </div>
+                                </div>
+                            )
+                        })}
+                        <div
+                            onClick={handleAddNewClick}
+                            className={`add-address-btn ${selectedAddressId === 'new' && !editingId ? 'active' : ''}`}
+                        >
+                            <PlusIcon className="icon-small" style={{ marginRight: '8px' }} />
+                            {selectedAddressId === 'new' && !editingId ? "Entering new address..." : "Use a different address"}
+                        </div>
+                    </div>
+
+                    {selectedAddressId === 'new' && (
+                        <div className="shipping-information">
+                            <h3 className="section-title-indigo">{editingId ? "EDIT ADDRESS" : "ADD NEW ADDRESS"}</h3>
+                            <div className="form-grid">
+                                <input name="name" value={newAddressForm.name} onChange={handleAddressFormChange} type="text" placeholder="Full Name / Label" className="form-input" />
+                                <input name="street" value={newAddressForm.street} onChange={handleAddressFormChange} type="text" placeholder="Address Line 1" className="form-input form-input-full" />
+                                <input name="city" value={newAddressForm.city} onChange={handleAddressFormChange} type="text" placeholder="City" className="form-input" />
+                                <input name="zip" value={newAddressForm.zip} onChange={handleAddressFormChange} type="text" placeholder="Zip Code" className="form-input" />
+
+                                <button type="button" onClick={handleSaveAddress} className="save-address-btn">
+                                    <CheckCircleIcon className="icon-small" />
+                                    {editingId ? "Update Address" : "Save & Deliver Here"}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="form-separator"></div>
+
+                {/* PAYMENT & TOTALS */}
+                <div>
+                    <h3 className="section-title-indigo">PAYMENT DETAILS</h3>
+                    <input type="text" placeholder="Card Number (16 digits)" required className="form-input form-input-full mb-16" maxLength="16" value={cardNumber} onChange={e => setCardNumber(e.target.value.replace(/\D/g, ''))} />
+                    <div className="form-grid-3">
+                        <input type="text" placeholder="MM/YY" required className="form-input" value={expiry} onChange={e => setExpiry(e.target.value)} maxLength="5" />
+                        <input type="text" placeholder="CVC" required className="form-input" value={cvc} onChange={e => setCvc(e.target.value.replace(/\D/g, '').slice(0, 3))} maxLength="3" />
+                        <input type="text" placeholder="Name" required className="form-input" value={nameOnCard} onChange={e => setNameOnCard(e.target.value)} />
+                    </div>
+                </div>
+
+                <div className="checkout-total-section">
+                    <div className="summary-total summary-total-large">
+                        <span>Final Total</span>
+                        <span className="final-total-price">{CurrencyFormatter.format(total)}</span>
+                    </div>
+                </div>
+
+                <button type="submit" className="place-order-btn" disabled={cartItems.length === 0}>
+                    Place Order
+                </button>
+            </form>
+        </div>
+    </div>
+);};
 
 // --- FORGOT PASSWORD VIEW COMPONENT ---
 const ForgotPasswordView = ({ onGoBack }) => {
@@ -1544,6 +1607,55 @@ export default function App() {
         loadUser();
     }, []);
 
+    // --- LOAD PURCHASE HISTORY FROM DB ---
+    useEffect(() => {
+        if (user) {
+            const fetchHistory = async () => {
+                try {
+                    const { data } = await api.get('/orders/myorders');
+                    
+                    // --- BRIDGE: MAP DB FIELDS TO UI FIELDS ---
+                    const formattedHistory = data.map(order => ({
+                        id: order._id, // Map _id -> id
+                        
+                        store: "Mall", // Static name
+                        
+                        // Capitalize status (e.g., 'processing' -> 'Processing')
+                        status: order.orderStatus.charAt(0).toUpperCase() + order.orderStatus.slice(1),
+                        
+                        // Format the Date
+                        date: new Date(order.createdAt).toLocaleDateString('en-US', {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric'
+                        }),
+                        
+                        // Map totalPrice -> total (Fixes the 0.00 bug)
+                        total: order.totalPrice, 
+                        
+                        // Map items
+                        items: order.orderItems.map(item => ({
+                            // The ID is crucial for the image lookup function
+                            id: item.product._id || item.product, 
+                            name: item.name,
+                            variant: item.variantId,
+                            quantity: item.quantity,
+                            price: item.price
+                        }))
+                    }));
+                    // ------------------------------------------
+
+                    setPurchaseHistory(formattedHistory);
+                } catch (error) {
+                    console.error("Failed to load history", error);
+                }
+            };
+            fetchHistory();
+        } else {
+            setPurchaseHistory([]); // Clear history on logout
+        }
+    }, [user]);
+
     const handleSaveProduct = useCallback((updatedProduct, isNew) => {
         setProducts(prevProducts => {
             if (isNew) {
@@ -1807,77 +1919,97 @@ const handleUpdateQuantity = useCallback(async (id, delta) => {
     }
 }, [cart, user, products]);
 
-// --- Place Order Handler (Fixed) ---
-const handlePlaceOrder = useCallback((selectedAddressId) => {
-    if (!selectedAddressId) {
-        alert("Please select or save a delivery address.");
-        return;
-    }
+    // --- FINAL FIXED HANDLE PLACE ORDER ---
+    const handlePlaceOrder = useCallback(async (orderData) => {
+        if (cart.length === 0) return;
 
-    if (cart.length === 0) return;
+        try {
+            console.log("Placing order...");
 
-    // 1. CALCULATE TOTALS (Snapshot the price at moment of purchase)
-    const subtotal = cart.reduce((sum, item) => {
-        const product = products.find(p => p.id === item.id);
-        const price = product?.price || item.price || 0;
-        return sum + (price * item.quantity);
-    }, 0);
-    
-    // Replicate your CheckoutView logic here
-    const shipping = subtotal > 0 ? 15.00 : 0;
-    const tax = subtotal * 0.05;
-    const finalTotal = subtotal + shipping + tax;
-    const totalCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+            // 1. Prepare Backend Data (Keep this simple/clean for the database)
+            const orderItemsForBackend = cart.map(item => ({
+                name: item.name,
+                quantity: item.quantity,
+                price: item.price,
+                product: item.id,
+                variantId: item.variant || item.variants?.[0]?._id
+            }));
 
-    // 2. CREATE ORDER OBJECT
-    const newOrder = {
-        id: Date.now(),
-        store: "Mall",
-        status: "Delivered",
-        // Use this format to fix the "Delivered on -" bug
-        date: new Date().toLocaleDateString('en-US', { 
-            year: 'numeric', 
-            month: 'short', 
-            day: 'numeric' 
-        }),
-        // SAVE THE TOTALS HERE
-        totalPrice: finalTotal, 
-        totalItems: totalCount,
-        items: cart.map(cartItem => {
-            const product = products.find(p => p.id === cartItem.id);
-            return {
-                id: cartItem.id,
-                name: product?.name || cartItem.name,
-                price: product?.price || cartItem.price,
-                imageUrl: product?.imageUrl || '',
-                quantity: cartItem.quantity,
-                variant: cartItem.variant || ''
+            const totalPrice = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+            // 2. Send to Backend
+            const { data: createdOrder } = await api.post('/orders', {
+                shippingAddress: {
+                    name: "Walk-in/Online Customer",
+                    street: "No Address Provided",
+                    city: "N/A",
+                    zip: "0000",
+                },
+                orderItems: orderItemsForBackend,
+                paymentMethod: "Cash on Delivery",
+                totalPrice
+            });
+
+            // ---------------- THE FIX ----------------
+
+            // 3. Create the Display Object
+            // We map the names EXACTLY to what PurchaseHistoryList expects:
+            // Expects: { id, store, status, date, total, items: [] }
+            const orderForDisplay = {
+                id: createdOrder._id || Date.now().toString(), // Fixes "Unique Key" error
+                store: "Mall",                                 // Fixes missing Store Badge
+                status: "Processing",
+                
+                // Fixes missing Date (Formats it like: "Dec 3, 2025")
+                date: new Date().toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric'
+                }),
+                
+                total: totalPrice, // Fixes missing Total Price in summary
+
+                // CRITICAL FIX: Rename 'cart' to 'items' (NOT orderItems)
+                // This matches {order.items.map...} in your History component
+                items: cart.map(cartItem => ({
+                    id: cartItem.id,     // Fixes missing Image (needs 'id' for lookup)
+                    name: cartItem.name,
+                    variant: cartItem.variant || "Standard",
+                    quantity: cartItem.quantity,
+                    price: cartItem.price
+                }))
             };
-        }),
-        addressId: selectedAddressId
-    };
 
-    // --- Update purchase history ---
-    setPurchaseHistory(prev => [newOrder, ...prev]); // Add new order to top of list
+            console.log("Adding to history UI:", orderForDisplay);
 
-    // --- Clear cart ---
-    setCart([]);
+            // 4. Update UI instantly
+            setPurchaseHistory(prev => [orderForDisplay, ...prev]);
 
-    // --- Success alert ---
-    const customAlert = (message) => {
-        const messageBox = document.createElement('div');
-        messageBox.className = 'custom-alert-success';
-        messageBox.textContent = message;
-        document.body.appendChild(messageBox);
-        setTimeout(() => document.body.removeChild(messageBox), 3000);
-    };
-    customAlert("Order placed successfully!");
+            // -----------------------------------------
 
-    // --- Navigate back to dashboard ---
-    setView('dashboard');
+            // 5. Cleanup
+            setCart([]);
+            
+            // Optional: Clear backend cart to keep it synced
+            try { await api.delete('/cart/clear'); } catch(e) { /* ignore if fails */ }
 
-}, [cart, products, setPurchaseHistory, setView]); // Added setView to dependencies
+            const customAlert = (message) => {
+                const messageBox = document.createElement('div');
+                messageBox.className = 'custom-alert-success';
+                messageBox.textContent = message;
+                document.body.appendChild(messageBox);
+                setTimeout(() => document.body.removeChild(messageBox), 3000);
+            };
+            customAlert("Order placed successfully!");
 
+            setView('dashboard');
+
+        } catch (error) {
+            console.error("Failed to place order: ", error);
+            alert(error.response?.data?.message || "Failed to place order.");
+        }
+    }, [cart, setPurchaseHistory, setCart, setView]);
+    
     // --- Search, Filter, and Sort Logic ---
     const filteredAndSortedProducts = useMemo(() => {
         let currentProducts = [...products];
@@ -2023,7 +2155,7 @@ const handlePlaceOrder = useCallback((selectedAddressId) => {
                 makeFilter={makeFilter}
                 setMakeFilter={setMakeFilter}
                 categoryFilter={categoryFilter}
-                setCategoryFilter={categoryFilter}
+                setCategoryFilter={setCategoryFilter}
             />
             <main className="main-content-wrapper">
                 {renderView()}

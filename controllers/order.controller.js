@@ -6,10 +6,6 @@ exports.createOrder = async (req, res) => {
     try {
         const {shippingAddress, paymentMethod} = req.body;
 
-        if(!shippingAddress.phoneNumber){
-            return res.status(400).json({ message: 'Phone number is required in shipping address' });
-        }
-
         const user = await User.findById(req.user.id).populate({
             path: 'cart.product',
             model: 'Product',
@@ -71,12 +67,25 @@ exports.createOrder = async (req, res) => {
     }
 };
 
+// order.controller.js
+
+// --- ADD THIS FUNCTION ---
 exports.getMyOrders = async (req, res) => {
     try {
-        const orders = await Order.find({ user: req.user.id });
+        // 1. Find orders for the logged-in user
+        // 2. Sort by newest first (createdAt: -1)
+        // 3. Populate product details (so we get the image if needed)
+        const orders = await Order.find({ user: req.user.id })
+            .populate({
+                path: 'orderItems.product',
+                model: 'Product',
+                select: 'imageUrl' // We just need the image
+            })
+            .sort({ createdAt: -1 });
+
         res.json(orders);
     } catch (error) {
-        console.error(error.message);
+        console.error("Get My Orders Error:", error.message);
         res.status(500).json({ message: 'Server error' });
     }
 };
