@@ -161,6 +161,29 @@ exports.updateOrderToDelivered = async (req, res) => {
     }
 };
 
+// Update Order Status to Delivered
+exports.markOrderAsDelivered = async (req, res) => {
+    try {
+        console.log("Attempting to deliver order", req.params.id);
+        const order = await Order.findById(req.params.id);
+
+        if (order) {
+            order.isDelivered = true;
+            order.deliveredAt = Date.now();
+            order.orderStatus = "Delivered"; // Or "Completed"
+
+            const updatedOrder = await order.save();
+            console.log("Order marked as delivered:", updatedOrder);
+            res.json(updatedOrder);
+        } else {
+            res.status(404).json({ message: 'Order not found' });
+        }
+    } catch (error) {
+        console.error("Error marking order as delivered:", error.message);
+        res.status(500).json({ message: 'Server Error' });
+    }
+};
+
 exports.fakePayOrder = async (req, res) => {
     try {
         const order = await Order.findById(req.params.id);

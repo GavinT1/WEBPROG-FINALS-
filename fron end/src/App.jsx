@@ -967,12 +967,12 @@ const AuthView = ({ onAuthSuccess, onForgotPasswordClick, cart }) => {
     );
 };
 
-//  PurchaseHistoryList ---
-const PurchaseHistoryList = ({ history = [], products = [] }) => {
+// --- UPDATED PURCHASE HISTORY LIST ---
+const PurchaseHistoryList = ({ history = [], products = [], onOrderReceived }) => { // 1. Add onOrderReceived prop
     
-    // Helper function to get product image for the order item
+    // Helper to get product image
     const getOrderItemImageUrl = (itemId) => {
-        const product = products.find(p => p.id === itemId);
+        const product = products.find(p => p.id === itemId || p._id === itemId);
         return product ? product.imageUrl : ''; 
     };
 
@@ -1002,11 +1002,14 @@ const PurchaseHistoryList = ({ history = [], products = [] }) => {
                             <span className="order-store-badge" style={{backgroundColor: '#EF4444', color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 'bold', marginRight: '8px'}}>Mall</span>
                             <span className="order-store-name" style={{fontWeight: 'bold', color: '#374151'}}>{order.store}</span>
                         </div>
-                        <span className="order-status" style={{color: '#10B981', fontWeight: 'bold'}}>{order.status}</span>
+                        {/* 2. Dynamic Status Color */}
+                        <span className="order-status" style={{color: order.status === 'Delivered' ? '#10B981' : '#F59E0B', fontWeight: 'bold'}}>
+                            {order.status}
+                        </span>
                     </div>
                     
-                    {(order.items || []).map(item => (  // SAFE: fallback to empty array
-                        <div key={item.id} className="order-item-detail" style={{display: 'flex', alignItems: 'center', padding: '15px 0'}}>
+                    {(order.items || []).map(item => (
+                        <div key={item.id || Math.random()} className="order-item-detail" style={{display: 'flex', alignItems: 'center', padding: '15px 0'}}>
                             <img 
                                 src={getOrderItemImageUrl(item.id)} 
                                 alt={item.name} 
@@ -1028,8 +1031,26 @@ const PurchaseHistoryList = ({ history = [], products = [] }) => {
                     </div>
                     
                     <div className="order-footer" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px'}}>
-                        <span className="order-delivery-date" style={{color: '#10B981', fontSize: '0.85rem'}}>Delivered on {order.date || '-'}</span>
-                        <button className="order-action-btn" style={{padding: '8px 15px', background: '#F59E0B', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}>Order Received</button>
+                        <span className="order-delivery-date" style={{color: '#10B981', fontSize: '0.85rem'}}>
+                            {/* 3. Show Date only if Delivered */}
+                            {order.status === 'Delivered' ? `Delivered on ${order.date}` : 'Delivery in progress'}
+                        </span>
+                        
+                        {/* 4. Button Logic: Hide if already delivered */}
+                        {order.status !== 'Delivered' && (
+                            <button 
+                                onClick={() => onOrderReceived(order.id)} 
+                                className="order-action-btn" 
+                                style={{padding: '8px 15px', background: '#F59E0B', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
+                            >
+                                Order Received
+                            </button>
+                        )}
+                        {order.status === 'Delivered' && (
+                            <button disabled style={{padding: '8px 15px', background: '#D1D5DB', color: 'white', border: 'none', borderRadius: '4px', cursor: 'not-allowed', fontWeight: 'bold'}}>
+                                Completed
+                            </button>
+                        )}
                     </div>
                 </div>
             ))}
@@ -1058,7 +1079,7 @@ const CheckCircleIcon = (props) => (
 );
 
 // --- DASHBOARD VIEW COMPONENT (Connected to Database) ---
-const DashboardView = ({ user, onLogout, addresses = [], setAddresses, history, products, onChangePasswordClick }) => {
+const DashboardView = ({ user, onLogout, addresses = [], setAddresses, history, products, onChangePasswordClick, onOrderReceived }) => {
     // 1. STATE: Manage Address Form
     const [editingId, setEditingId] = useState(null);
     const [isFormOpen, setIsFormOpen] = useState(false);
@@ -1294,7 +1315,7 @@ const DashboardView = ({ user, onLogout, addresses = [], setAddresses, history, 
                         )}
                     </div>
                     
-                    <PurchaseHistoryList history={history} products={products} />
+                    <PurchaseHistoryList history={history} products={products} onOrderReceived={onOrderReceived} />
                 </div>
             </div>
         </div>
@@ -1888,6 +1909,45 @@ export default function App() {
         }
     }, []);
 
+    // --- HANDLE ORDER RECEIVED ---
+    const handleOrderReceived = useCallback(async (orderId) => {
+        if(!window.confirm("Confirm that you have received this order?")) return;
+
+        try {
+            // 1. Call Backend to update status
+            await api.put(`/orders/${orderId}/deliver`);
+
+            // 2. Update Local State immediately
+            setPurchaseHistory(prev => prev.map(order => {
+                if (order.id === orderId) {
+                    return {
+                        ...order,
+                        status: "Delivered",
+                        date: new Date().toLocaleDateString('en-US', {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric'
+                        })
+                    };
+                }
+                return order;
+            }));
+
+            const customAlert = (message) => {
+                const messageBox = document.createElement('div');
+                messageBox.className = 'custom-alert-success';
+                messageBox.textContent = message;
+                document.body.appendChild(messageBox);
+                setTimeout(() => document.body.removeChild(messageBox), 3000);
+            };
+            customAlert("Order marked as Delivered!");
+
+        } catch (error) {
+            console.error("Failed to update order", error);
+            alert("Failed to update status.");
+        }
+    }, []);
+
     // --- FINAL CONNECTED DELETE HANDLER ---
     const handleDeleteProduct = useCallback(async (id) => {
         if (window.confirm("Are you sure you want to delete this product? PERMANENTLY?")) {
@@ -2355,6 +2415,7 @@ const handleUpdateQuantity = useCallback(async (id, delta) => {
                     history={purchaseHistory}
                     products={products} // Needed for PurchaseHistoryList to get product images
                     onChangePasswordClick={handleChangePasswordClick} // NEW PROP
+                    onOrderReceived={handleOrderReceived}
                 />;
 
             case 'change-password':
