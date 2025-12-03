@@ -1919,25 +1919,42 @@ const handleUpdateQuantity = useCallback(async (id, delta) => {
     }
 }, [cart, user, products]);
 
-    // --- FINAL FIXED HANDLE PLACE ORDER ---
+    // --- FINAL FIXED HANDLE PLACE ORDER (With Price Lookup) ---
     const handlePlaceOrder = useCallback(async (orderData) => {
         if (cart.length === 0) return;
 
         try {
             console.log("Placing order...");
 
-            // 1. Prepare Backend Data (Keep this simple/clean for the database)
-            const orderItemsForBackend = cart.map(item => ({
-                name: item.name,
+            // HELPER: Find the real product details for every cart item
+            // This ensures we have the correct PRICE even if the cart data is incomplete after login
+            const enrichedItems = cart.map(item => {
+                const rawId = item.id || item.productId || (typeof item.product === 'object' ? item.product?._id : item.product);
+                // Find the product in the main list
+                const realProduct = products.find(p => String(p.id) === String(rawId) || String(p._id) === String(rawId));
+                
+                return {
+                    ...item,
+                    // Use the real price from the product list, fallback to item.price, fallback to 0
+                    realPrice: realProduct ? realProduct.price : (item.price || 0),
+                    realName: realProduct ? realProduct.name : item.name,
+                    realId: realProduct ? realProduct.id : rawId
+                };
+            });
+
+            // 1. Calculate Total using the REAL prices
+            const totalPrice = enrichedItems.reduce((sum, item) => sum + item.realPrice * item.quantity, 0);
+
+            // 2. Prepare Backend Data
+            const orderItemsForBackend = enrichedItems.map(item => ({
+                name: item.realName,
                 quantity: item.quantity,
-                price: item.price,
-                product: item.id,
+                price: item.realPrice, // Send correct price
+                product: item.realId,
                 variantId: item.variant || item.variants?.[0]?._id
             }));
 
-            const totalPrice = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-
-            // 2. Send to Backend
+            // 3. Send to Backend
             const { data: createdOrder } = await api.post('/orders', {
                 shippingAddress: {
                     name: "Walk-in/Online Customer",
@@ -1947,51 +1964,42 @@ const handleUpdateQuantity = useCallback(async (id, delta) => {
                 },
                 orderItems: orderItemsForBackend,
                 paymentMethod: "Cash on Delivery",
-                totalPrice
+                totalPrice: totalPrice // Send correct total
             });
 
             // ---------------- THE FIX ----------------
 
-            // 3. Create the Display Object
-            // We map the names EXACTLY to what PurchaseHistoryList expects:
-            // Expects: { id, store, status, date, total, items: [] }
+            // 4. Create the Display Object for History
             const orderForDisplay = {
-                id: createdOrder._id || Date.now().toString(), // Fixes "Unique Key" error
-                store: "Mall",                                 // Fixes missing Store Badge
+                id: createdOrder._id || Date.now().toString(),
+                store: "Mall",
                 status: "Processing",
-                
-                // Fixes missing Date (Formats it like: "Dec 3, 2025")
                 date: new Date().toLocaleDateString('en-US', {
                     year: 'numeric',
                     month: 'short',
                     day: 'numeric'
                 }),
-                
-                total: totalPrice, // Fixes missing Total Price in summary
+                total: totalPrice, // Use the calculated total (Not NaN)
 
-                // CRITICAL FIX: Rename 'cart' to 'items' (NOT orderItems)
-                // This matches {order.items.map...} in your History component
-                items: cart.map(cartItem => ({
-                    id: cartItem.id,     // Fixes missing Image (needs 'id' for lookup)
-                    name: cartItem.name,
-                    variant: cartItem.variant || "Standard",
-                    quantity: cartItem.quantity,
-                    price: cartItem.price
+                items: enrichedItems.map((item, index) => ({
+                    // Use the real details we found earlier
+                    id: item.realId || `temp-${index}`, 
+                    name: item.realName,
+                    variant: item.variant || "Standard",
+                    quantity: item.quantity,
+                    price: item.realPrice // Use the real price (Not NaN)
                 }))
             };
 
             console.log("Adding to history UI:", orderForDisplay);
 
-            // 4. Update UI instantly
+            // 5. Update UI instantly
             setPurchaseHistory(prev => [orderForDisplay, ...prev]);
 
             // -----------------------------------------
 
-            // 5. Cleanup
             setCart([]);
-            
-            // Optional: Clear backend cart to keep it synced
-            try { await api.delete('/cart/clear'); } catch(e) { /* ignore if fails */ }
+            try { await api.delete('/cart/clear'); } catch(e) { /* ignore */ }
 
             const customAlert = (message) => {
                 const messageBox = document.createElement('div');
@@ -2008,8 +2016,8 @@ const handleUpdateQuantity = useCallback(async (id, delta) => {
             console.error("Failed to place order: ", error);
             alert(error.response?.data?.message || "Failed to place order.");
         }
-    }, [cart, setPurchaseHistory, setCart, setView]);
-    
+    }, [cart, products, setPurchaseHistory, setCart, setView]);
+
     // --- Search, Filter, and Sort Logic ---
     const filteredAndSortedProducts = useMemo(() => {
         let currentProducts = [...products];
@@ -2053,6 +2061,40 @@ const handleUpdateQuantity = useCallback(async (id, delta) => {
         return currentProducts;
     }, [searchTerm, makeFilter, categoryFilter, sortOrder, products]);
 
+    // --- FINAL FIX: ENRICH CART DATA ---
+    // This combines the "Raw IDs" from the database with the "Full Details" from your product list.
+    const enrichedCart = useMemo(() => {
+        return cart.map(cartItem => {
+            // 1. Figure out the ID (Backend might send it as 'product' string or object)
+            // We check all possible locations for the ID
+            const productId = cartItem.productId 
+                           || (typeof cartItem.product === 'object' ? cartItem.product._id : cartItem.product)
+                           || cartItem.id;
+
+            // 2. Find the Real Product Details from your 'products' state
+            const fullProductDetails = products.find(p => p.id === productId || p._id === productId);
+
+            // 3. If product not found (yet), return a placeholder to prevent crash
+            if (!fullProductDetails) {
+                return {
+                    ...cartItem,
+                    id: productId, // Important for deleting
+                    name: "Loading Product...",
+                    price: 0,
+                    imageUrl: "",
+                    quantity: cartItem.quantity
+                };
+            }
+
+            // 4. MERGE: Keep backend quantity/variant, Use frontend Name/Price/Image
+            return {
+                ...fullProductDetails, // Gets name, price, image, description
+                ...cartItem,           // Gets quantity, variantId
+                id: fullProductDetails.id // Ensures ID is at the top level for the Delete button
+            };
+        });
+    }, [cart, products]);
+
 
     // --- View Renderer (Updated to pass new props to DashboardView) ---
     const renderView = () => {
@@ -2066,7 +2108,7 @@ const handleUpdateQuantity = useCallback(async (id, delta) => {
                 />;
             case 'cart':
                 return <CartView 
-                    cartItems={cart} 
+                    cartItems={enrichedCart} 
                     onCheckoutClick={handleCheckoutClick}
                     onUpdateQuantity={handleUpdateQuantity}
                     onRemove={handleRemoveItem}
@@ -2075,7 +2117,7 @@ const handleUpdateQuantity = useCallback(async (id, delta) => {
             case 'checkout':
                 return (
                     <CheckoutView
-                        cartItems={cart}
+                        cartItems={enrichedCart}
                         addresses={addresses}
                         setAddresses={setAddresses}
                         // --- THE FIX IS HERE ---
